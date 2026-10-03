@@ -1,0 +1,1178 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<meta name="color-scheme" content="light dark">
+<!-- 外部通信を一切しないことをブラウザに強制する（万一の注入があってもデータを外へ送れない） -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'">
+<meta name="referrer" content="no-referrer">
+<title>絵文字SS入力補助ツール</title>
+<style>
+:root {
+  --bg: #f6f5f8;
+  --surface: #ffffff;
+  --surface2: #efedf3;
+  --border: #d9d5e0;
+  --text: #1f1b26;
+  --muted: #6d6678;
+  --accent: #c2477a;
+  --accent-weak: #f8e3ec;
+  --accent-text: #ffffff;
+  --warn: #d33a2c;
+  --warn-weak: #fde5e2;
+  --select: #fff3c7;
+  --shadow: 0 -2px 12px rgba(0,0,0,.08);
+  --radius: 10px;
+  --tap: 44px;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #17151b;
+    --surface: #221f28;
+    --surface2: #2c2833;
+    --border: #3d3846;
+    --text: #ece9f1;
+    --muted: #a59fb0;
+    --accent: #ef7aa9;
+    --accent-weak: #45263a;
+    --accent-text: #1a1016;
+    --warn: #ff7b6e;
+    --warn-weak: #4a2421;
+    --select: #3f3820;
+    --shadow: 0 -2px 12px rgba(0,0,0,.4);
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", "Yu Gothic UI", "Segoe UI Emoji", sans-serif;
+  font-size: 16px;
+  overscroll-behavior: none;
+}
+button, input, select, textarea { font: inherit; color: inherit; }
+button {
+  min-height: var(--tap);
+  min-width: var(--tap);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: var(--radius);
+  cursor: pointer;
+  padding: 0 12px;
+  touch-action: manipulation;
+}
+button:hover { border-color: var(--accent); }
+button:disabled { opacity: .4; cursor: default; }
+button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: bold; }
+button.danger { color: var(--warn); }
+input[type=text], select, textarea {
+  min-height: var(--tap);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  font-size: 16px;
+  width: 100%;
+}
+input:focus, select:focus, textarea:focus, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+#app {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  height: var(--app-h, 100dvh);
+  display: flex;
+  flex-direction: column;
+  max-width: 760px;
+  margin: 0 auto;
+  background: var(--bg);
+}
+
+/* Header */
+header {
+  display: flex;
+  gap: 6px;
+  padding: 8px;
+  padding-top: max(8px, env(safe-area-inset-top));
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  align-items: center;
+}
+header select { flex: 1; min-width: 0; }
+header button { padding: 0; font-size: 18px; }
+
+/* Line list */
+#list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+  -webkit-overflow-scrolling: touch;
+}
+.empty { color: var(--muted); text-align: center; padding: 32px 8px; line-height: 1.8; }
+.tagline {
+  color: var(--muted);
+  padding: 6px 10px;
+  margin-bottom: 4px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+  font-size: 14px;
+  word-break: break-all;
+}
+.line {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 4px;
+  position: relative;
+}
+.line.selected { background: var(--select); border-color: var(--accent); }
+.line.dragging { opacity: .4; }
+.line.drop-before::before, .line.drop-after::after {
+  content: ""; position: absolute; left: 0; right: 0; height: 3px; background: var(--accent); border-radius: 2px;
+}
+.line.drop-before::before { top: -4px; }
+.line.drop-after::after { bottom: -4px; }
+.line-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 8px 10px;
+  min-height: var(--tap);
+  cursor: pointer;
+}
+.handle {
+  display: none;
+  cursor: grab;
+  color: var(--muted);
+  user-select: none;
+  padding: 0 2px;
+  line-height: 1.6;
+}
+@media (pointer: fine) { .handle { display: block; } }
+.num { color: var(--muted); font-size: 12px; min-width: 1.8em; text-align: right; line-height: 2; user-select: none; }
+.ltext { flex: 1; white-space: pre-wrap; word-break: break-word; line-height: 1.6; }
+.ltext.narr { color: var(--text); }
+.line-head .del {
+  flex: 0 0 auto;
+  margin: -8px -10px -8px 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 16px;
+  padding: 0;
+}
+.line-head .del:hover { color: var(--warn); background: var(--warn-weak); }
+.editor .after { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
+.editor .after span { flex: 0 0 auto; }
+.editor {
+  border-top: 1px solid var(--border);
+  padding: 8px;
+  display: grid;
+  gap: 8px;
+}
+.editor textarea { resize: vertical; min-height: 64px; }
+.editor .row { display: flex; gap: 6px; flex-wrap: wrap; }
+.editor .row > * { flex: 1; }
+.editor .row button { flex: 0 0 auto; }
+.editor .row .grow { flex: 1; }
+
+/* Segmented tabs */
+.seg { display: flex; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.seg button {
+  flex: 1; border: 0; border-radius: 0; background: var(--surface);
+  border-right: 1px solid var(--border);
+}
+.seg button:last-child { border-right: 0; }
+.seg button[aria-pressed=true] { background: var(--accent); color: var(--accent-text); font-weight: bold; }
+
+/* Bottom panel */
+#panel {
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  box-shadow: var(--shadow);
+  padding: 6px 8px;
+  padding-bottom: max(6px, env(safe-area-inset-bottom));
+  display: grid;
+  gap: 6px;
+}
+#counter { display: flex; justify-content: space-between; align-items: baseline; font-size: 14px; color: var(--muted); padding: 0 2px; gap: 8px; flex-wrap: wrap; }
+#count { font-variant-numeric: tabular-nums; color: var(--text); font-weight: bold; }
+#counter.over #count { color: var(--warn); }
+#over { color: var(--warn); font-weight: bold; margin-left: 4px; }
+#banner {
+  display: none;
+  align-items: center;
+  gap: 6px;
+  background: var(--select);
+  border-radius: var(--radius);
+  padding: 0 0 0 10px;
+  font-size: 14px;
+}
+#banner.show { display: flex; }
+#banner span { flex: 1; }
+#chars {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+  scrollbar-width: thin;
+}
+#chars.disabled { opacity: .35; }
+.cbtn {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-width: 52px;
+  height: 52px;
+  padding: 2px 6px;
+  line-height: 1.1;
+}
+.cbtn .e { font-size: 22px; }
+.cbtn .n { font-size: 10px; color: var(--muted); max-width: 5.5em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cbtn[aria-pressed=true] { background: var(--accent-weak); border: 2px solid var(--accent); }
+.nochar { color: var(--muted); font-size: 13px; padding: 8px; }
+#inputRow { display: flex; gap: 6px; }
+#inputRow input { flex: 1; min-width: 0; }
+#copyRow button { width: 100%; }
+#notice { font-size: 10.5px; line-height: 1.45; color: var(--muted); text-align: center; }
+#notice p { margin: 0; }
+body.kb-open #copyRow { display: none; }
+
+/* Dialogs */
+dialog {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--bg);
+  color: var(--text);
+  padding: 0;
+  width: min(560px, calc(100vw - 16px));
+  max-height: calc(100dvh - 32px);
+}
+dialog::backdrop { background: rgba(0,0,0,.45); }
+.dlg-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 8px 8px 16px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  position: sticky; top: 0; z-index: 1;
+}
+.dlg-head h2 { font-size: 17px; margin: 0; }
+.dlg-body { padding: 12px; display: grid; gap: 16px; }
+.dlg-body h3 { font-size: 15px; margin: 0 0 6px; }
+.note { font-size: 12px; color: var(--muted); margin: 4px 0 0; line-height: 1.5; }
+.erow { display: flex; gap: 4px; align-items: center; margin-bottom: 6px; }
+.erow input.emoji { width: 4.2em; flex: 0 0 auto; text-align: center; font-size: 20px; padding: 4px; }
+.erow input.emoji.invalid { border-color: var(--warn); background: var(--warn-weak); }
+.erow input.name { flex: 1; min-width: 0; }
+.erow button { padding: 0; flex: 0 0 auto; }
+.erow label.chk { min-width: var(--tap); min-height: var(--tap); display: flex; align-items: center; justify-content: center; cursor: pointer; }
+.erow label.chk input { width: 22px; height: 22px; accent-color: var(--accent); }
+.btnrow { display: flex; gap: 6px; flex-wrap: wrap; }
+.btnrow button { flex: 1; }
+#copyText { min-height: 200px; white-space: pre; }
+
+/* Toast */
+#toast {
+  position: fixed;
+  left: 50%;
+  bottom: calc(var(--toast-bottom, 24px));
+  transform: translateX(-50%) translateY(20px);
+  background: var(--text);
+  color: var(--bg);
+  border-radius: 999px;
+  padding: 6px 8px 6px 18px;
+  display: flex; align-items: center; gap: 8px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .2s, transform .2s;
+  z-index: 100;
+  max-width: calc(100vw - 24px);
+  font-size: 14px;
+  min-height: 44px;
+}
+#toast.show { opacity: 1; transform: translateX(-50%) translateY(0); pointer-events: auto; }
+#toast button { background: transparent; color: var(--accent); border: 0; font-weight: bold; min-height: 32px; }
+#toast:not(.has-action) { padding-right: 18px; }
+#toast:not(.has-action) button { display: none; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <label for="draftSel" class="sr">下書き</label>
+    <select id="draftSel"></select>
+    <button id="btnNew" title="新規作成" aria-label="新規作成">＋</button>
+    <button id="btnRename" title="下書き名変更" aria-label="下書き名変更">✎</button>
+    <button id="btnDelDraft" title="下書き削除" aria-label="下書き削除" class="danger">🗑</button>
+    <button id="btnSettings" title="設定（キャラ・ハッシュタグ）" aria-label="設定">⚙</button>
+  </header>
+
+  <main id="list" aria-label="本文プレビュー"></main>
+
+  <section id="panel" aria-label="入力エリア">
+    <div id="counter" aria-live="polite">
+      <div><span id="count">0</span> / 280<span id="over"></span></div>
+      <div id="split"></div>
+    </div>
+    <div id="banner"><span id="bannerText"></span><button id="bannerClear" aria-label="挿入位置を解除">✕ 末尾に追加</button></div>
+    <div class="seg" id="tabs" role="group" aria-label="種別">
+      <button data-type="say" aria-pressed="true">「」セリフ</button>
+      <button data-type="think" aria-pressed="false">（）心の声</button>
+      <button data-type="narr" aria-pressed="false">地の文</button>
+    </div>
+    <div id="chars" role="group" aria-label="キャラ"></div>
+    <div id="inputRow">
+      <input type="text" id="input" placeholder="セリフを入力して Enter" autocomplete="off" enterkeyhint="send" aria-label="本文">
+      <button id="btnAdd" class="primary">追加</button>
+    </div>
+    <div id="copyRow"><button id="btnCopy">📋 全文コピー</button></div>
+    <footer id="notice">
+      <p>本ツールは『魔法少女ノ魔女裁判』の非公式ファンメイド作品です。公式とは関係ありません。</p>
+      <p>AI利用：本ツールのコードは生成AI（Claude）を利用して作成しています。</p>
+    </footer>
+  </section>
+</div>
+
+<dialog id="dlgSettings" aria-labelledby="settingsTitle">
+  <div class="dlg-head">
+    <h2 id="settingsTitle">設定</h2>
+    <button class="closeDlg" aria-label="閉じる">✕</button>
+  </div>
+  <div class="dlg-body">
+    <section>
+      <h3>キャラ定義</h3>
+      <div id="charEditor"></div>
+      <div class="btnrow">
+        <button id="btnAddChar">＋ キャラ追加</button>
+        <button id="btnResetChars" class="danger">初期値に戻す</button>
+      </div>
+      <p class="note">絵文字は必須、表示名は任意（ボタン表示用で出力には含まれません）。<br>キャラを変更しても、既存の下書きの行は変更前の絵文字のまま残ります。</p>
+    </section>
+    <section>
+      <h3>ハッシュタグ</h3>
+      <div id="tagEditor"></div>
+      <div class="btnrow">
+        <button id="btnAddTag">＋ タグ追加</button>
+        <button id="btnResetTags" class="danger">初期値に戻す</button>
+      </div>
+      <p class="note">チェックONのタグが本文の先頭に1行で挿入されます（全下書き共通）。「#」は省略可。<br>公式ガイドラインに従い、#まのさば と #まのさばネタバレ は同時にONにできません（片方をONにすると、もう片方はOFFになります）。</p>
+    </section>
+  </div>
+</dialog>
+
+<dialog id="dlgCopy" aria-labelledby="copyTitle">
+  <div class="dlg-head">
+    <h2 id="copyTitle">手動でコピー</h2>
+    <button class="closeDlg" aria-label="閉じる">✕</button>
+  </div>
+  <div class="dlg-body">
+    <p class="note" style="margin:0">この環境では自動コピーができませんでした。下のテキストを長押し（PCは Ctrl+C）でコピーしてください。</p>
+    <textarea id="copyText" readonly></textarea>
+  </div>
+</dialog>
+
+<div id="toast" role="status"><span id="toastMsg"></span><button id="toastAct"></button></div>
+
+<script>
+(() => {
+'use strict';
+
+// ===== 定数・初期値 =====
+const VERSION = 2; // v2: ハッシュタグに排他グループ group を追加
+const LIMIT = 280;
+const KEYS = {
+  chars: 'ssTool.characters',
+  tags: 'ssTool.hashtags',
+  drafts: 'ssTool.drafts',
+  cur: 'ssTool.currentDraftId',
+};
+const DEFAULT_CHARS = [
+  ['エマ', '🌸'], ['ヒロ', '🖋️'], ['アンアン', '🐑'], ['ノア', '🎨'], ['レイア', '👑'],
+  ['ミリア', '📱'], ['マーゴ', '🦋'], ['ナノカ', '🔫'], ['アリサ', '🔥'], ['シェリー', '🔎'],
+  ['ハンナ', '🪡'], ['ココ', '🎧'], ['メルル', '🩹'],
+];
+// group が同じタグは同時にONにできない（公式ガイドライン: ネタバレ投稿は #まのさばネタバレ のみ）
+const DEFAULT_TAGS = [
+  ['#まのさば', false, 'spoiler'], ['#まのさば二次創作', false, null], ['#まのさばネタバレ', true, 'spoiler'],
+];
+const TYPE_LABEL = { say: '「」', think: '（）', narr: '地の文' };
+
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+const $ = (s) => document.querySelector(s);
+const cssId = (id) => (window.CSS && CSS.escape ? CSS.escape(id) : String(id).replace(/["\\]/g, '\\$&'));
+const el = (tag, props = {}, ...children) => {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(props)) {
+    if (k === 'class') e.className = v;
+    else if (k === 'text') e.textContent = v;
+    else if (k.startsWith('on')) e.addEventListener(k.slice(2), v);
+    else if (k in e && typeof v !== 'string') e[k] = v;
+    else e.setAttribute(k, v);
+  }
+  for (const c of children) if (c != null) e.append(c);
+  return e;
+};
+const defaultChars = () => DEFAULT_CHARS.map(([name, emoji]) => ({ id: uid(), emoji, name }));
+const defaultTags = () => DEFAULT_TAGS.map(([tag, on, group]) => (group ? { id: uid(), tag, on, group } : { id: uid(), tag, on }));
+
+// 同じ group で複数ONなら、先頭以外をOFFにする
+function enforceTagGroups(items) {
+  const seen = new Set();
+  for (const t of items) {
+    if (!t.on || !t.group) continue;
+    if (seen.has(t.group)) t.on = false;
+    else seen.add(t.group);
+  }
+  return items;
+}
+
+// ===== 保存 =====
+let storageOk = true;
+// 旧バージョンのデータを現在の形式に変換する。fromVersion ごとに順に適用
+const MIGRATIONS = {
+  [KEYS.tags]: {
+    // v1 → v2: 初期タグ #まのさば / #まのさばネタバレ に排他グループ spoiler を付与
+    1: (items) => items.map((t) => {
+      const tag = String(t.tag || '').replace(/\s+/g, '').replace(/^[#＃]?/, '#');
+      return (tag === '#まのさば' || tag === '#まのさばネタバレ') ? { ...t, group: 'spoiler' } : t;
+    }),
+  },
+};
+const migratedKeys = new Set();
+
+// 保存データは手で書き換えられたり壊れたりし得るので、型をそろえてから使う
+const str = (v) => (typeof v === 'string' ? v : '');
+const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+function uniqueIds(items) {
+  const seen = new Set();
+  for (const o of items) {
+    if (!o.id || seen.has(o.id)) o.id = uid();
+    seen.add(o.id);
+  }
+  return items;
+}
+const sanitizeChars = (items) => uniqueIds(items.filter(isObj).map((o) => ({ id: str(o.id), emoji: str(o.emoji).trim(), name: str(o.name) })));
+const sanitizeTags = (items) => uniqueIds(items.filter(isObj).map((o) => {
+  const t = { id: str(o.id), tag: str(o.tag), on: o.on === true };
+  if (str(o.group)) t.group = o.group;
+  return t;
+}));
+function sanitizeLine(o) {
+  const l = {
+    id: str(o.id),
+    type: ['say', 'think', 'narr'].includes(o.type) ? o.type : 'narr',
+    emoji: str(o.emoji),
+    text: str(o.text).replace(/[\r\n]+/g, ''),
+  };
+  const after = str(o.after).replace(/[\r\n]+/g, '');
+  if (after) l.after = after;
+  return l;
+}
+const sanitizeDrafts = (items) => uniqueIds(items.filter(isObj).map((o) => ({
+  id: str(o.id),
+  name: str(o.name) || '(無題)',
+  lines: uniqueIds(Array.isArray(o.lines) ? o.lines.filter(isObj).map(sanitizeLine) : []),
+  updatedAt: Number.isFinite(o.updatedAt) ? o.updatedAt : Date.now(),
+})));
+
+let unreadableNotice = false;
+function load(key, fallback, sanitize) {
+  let raw;
+  try { raw = localStorage.getItem(key); } catch (e) { warnStorage(); return fallback(); }
+  if (!raw) return fallback();
+  try {
+    const obj = JSON.parse(raw);
+    if (obj && Array.isArray(obj.items) && Number.isInteger(obj.version) && obj.version >= 1 && obj.version <= VERSION) {
+      let items = obj.items;
+      for (let v = obj.version; v < VERSION; v++) {
+        const fn = MIGRATIONS[key] && MIGRATIONS[key][v];
+        if (fn) items = fn(items);
+      }
+      if (obj.version !== VERSION) migratedKeys.add(key);
+      return sanitize(items);
+    }
+  } catch (e) { /* 壊れたデータ → 下で退避 */ }
+  // 読めないデータ（破損・このツールより新しい形式）は、初期値で上書きして消さないよう別キーに退避しておく
+  try { localStorage.setItem(key + '.unreadable', raw); } catch (e) { /* noop */ }
+  if (!unreadableNotice) {
+    unreadableNotice = true;
+    setTimeout(() => toast('読み込めない保存データを退避して初期状態で起動しました', null, null, 5000), 0);
+  }
+  return fallback();
+}
+function store(key, items) {
+  try { localStorage.setItem(key, JSON.stringify({ version: VERSION, items })); }
+  catch (e) { warnStorage(); }
+}
+function warnStorage() {
+  // 起動処理中に呼ばれてもよいように、通知は初期化後に出す
+  if (storageOk) { storageOk = false; setTimeout(() => toast('ブラウザに保存できません（プライベートモード等）'), 0); }
+}
+const saveChars = () => store(KEYS.chars, chars);
+const saveTags = () => store(KEYS.tags, tags);
+const saveDrafts = () => store(KEYS.drafts, drafts);
+const saveCur = () => { try { localStorage.setItem(KEYS.cur, curId); } catch (e) { warnStorage(); } };
+
+// ===== 状態 =====
+const loadChars = () => load(KEYS.chars, defaultChars, sanitizeChars);
+const loadTags = () => enforceTagGroups(load(KEYS.tags, defaultTags, sanitizeTags));
+const loadDrafts = () => load(KEYS.drafts, () => [], sanitizeDrafts);
+let chars = loadChars();
+let tags = loadTags();
+let drafts = loadDrafts();
+let curId = null;
+try { curId = localStorage.getItem(KEYS.cur); } catch (e) { /* noop */ }
+// 変換したデータは新しい形式で保存し直す
+if (migratedKeys.has(KEYS.chars)) saveChars();
+if (migratedKeys.has(KEYS.tags)) saveTags();
+if (migratedKeys.has(KEYS.drafts)) saveDrafts();
+migratedKeys.clear();
+
+const ui = { type: 'say', charId: chars[0] ? chars[0].id : null, selId: null, editing: false };
+
+function fmtDate(d) {
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}/${p(d.getMonth() + 1)}/${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+function newDraft() {
+  const d = { id: uid(), name: fmtDate(new Date()), lines: [], updatedAt: Date.now() };
+  drafts.unshift(d);
+  curId = d.id;
+  saveDrafts(); saveCur();
+  return d;
+}
+if (!drafts.length) newDraft();
+if (!drafts.some((d) => d.id === curId)) { curId = drafts[0].id; saveCur(); }
+const cur = () => drafts.find((d) => d.id === curId);
+
+function touch() {
+  const d = cur();
+  d.updatedAt = Date.now();
+  saveDrafts();
+  renderCounter();
+}
+
+// ===== 文字数（X準拠） =====
+const segmenter = (typeof Intl !== 'undefined' && Intl.Segmenter) ? new Intl.Segmenter('ja', { granularity: 'grapheme' }) : null;
+const isRI = (c) => c >= 0x1F1E6 && c <= 0x1F1FF;
+function graphemes(s) {
+  if (segmenter) return Array.from(segmenter.segment(s), (x) => x.segment);
+  // 簡易フォールバック（ZWJ・異体字セレクタ・肌色・キーキャップ・国旗・タグ・結合文字）
+  const cps = Array.from(s), out = [];
+  for (let i = 0; i < cps.length; i++) {
+    let g = cps[i];
+    let riPaired = false;
+    while (i + 1 < cps.length) {
+      const c = cps[i + 1].codePointAt(0);
+      if (c === 0x200D && i + 2 < cps.length) { g += cps[i + 1] + cps[i + 2]; i += 2; continue; }
+      if ((c >= 0xFE00 && c <= 0xFE0F) || (c >= 0x1F3FB && c <= 0x1F3FF) || c === 0x20E3 ||
+          (c >= 0xE0020 && c <= 0xE007F) || (c >= 0x0300 && c <= 0x036F) || (c >= 0x3099 && c <= 0x309A)) {
+        g += cps[i + 1]; i++; continue;
+      }
+      if (!riPaired && isRI(g.codePointAt(0)) && Array.from(g).length === 1 && isRI(c)) {
+        g += cps[i + 1]; i++; riPaired = true; continue;
+      }
+      break;
+    }
+    out.push(g);
+  }
+  return out;
+}
+let emojiRe;
+try { emojiRe = new RegExp('\\p{Extended_Pictographic}|\\p{Regional_Indicator}|\\u20E3', 'u'); }
+catch (e) { emojiRe = /[☀-➿⃣]|\uD83C[\uDDE6-\uDDFF\uDF00-\uDFFF]|\uD83D[\uDC00-\uDEFF]|\uD83E[\uDD00-\uDEFF]/; }
+function cpWeight(c) {
+  // twitter-text v3 の重み1の範囲。それ以外は2
+  if (c <= 0x10FF || (c >= 0x2000 && c <= 0x200D) || (c >= 0x2010 && c <= 0x201F) || (c >= 0x2032 && c <= 0x2037)) return 1;
+  return 2;
+}
+function xCount(text) {
+  let n = 0;
+  for (const g of graphemes(text.normalize('NFC'))) {
+    if (emojiRe.test(g)) n += 2;
+    else for (const ch of g) n += cpWeight(ch.codePointAt(0));
+  }
+  return n;
+}
+
+// ===== 出力 =====
+function normTag(t) {
+  t = String(t || '').replace(/\s+/g, '');
+  if (!t) return '';
+  t = /^[#＃]/.test(t) ? '#' + t.slice(1) : '#' + t;
+  return t === '#' ? '' : t;
+}
+const tagLine = () => tags.filter((t) => t.on).map((t) => normTag(t.tag)).filter(Boolean).join(' ');
+function formatLine(l) {
+  const after = l.after || '';
+  if (l.type === 'say') return `${l.emoji}「${l.text}」${after}`;
+  if (l.type === 'think') return `${l.emoji}（${l.text}）${after}`;
+  return l.text;
+}
+function fullText() {
+  const parts = cur().lines.map(formatLine);
+  const t = tagLine();
+  if (t) parts.unshift(t);
+  return parts.join('\n');
+}
+
+// ===== 描画 =====
+const listEl = $('#list');
+const inputEl = $('#input');
+
+function renderAll() {
+  renderDrafts();
+  renderTabs();
+  renderChars();
+  renderLines();
+  renderBanner();
+  renderCounter();
+}
+
+function renderDrafts() {
+  const sel = $('#draftSel');
+  sel.replaceChildren(...drafts.map((d) => el('option', { value: d.id, text: d.name || '(無題)' })));
+  sel.value = curId;
+}
+
+function renderTabs() {
+  for (const b of document.querySelectorAll('#tabs button')) b.setAttribute('aria-pressed', String(b.dataset.type === ui.type));
+  inputEl.placeholder = ui.type === 'narr' ? '地の文を入力して Enter' : ui.type === 'think' ? '心の声を入力して Enter' : 'セリフを入力して Enter';
+}
+
+function usableChars() { return chars.filter((c) => c.emoji && c.emoji.trim()); }
+
+function renderChars() {
+  const box = $('#chars');
+  const list = usableChars();
+  if (!list.some((c) => c.id === ui.charId)) ui.charId = list[0] ? list[0].id : null;
+  const disabled = ui.type === 'narr';
+  box.classList.toggle('disabled', disabled);
+  if (!list.length) {
+    box.replaceChildren(el('div', { class: 'nochar', text: 'キャラ未登録です。⚙ 設定から追加してください。' }));
+    return;
+  }
+  box.replaceChildren(...list.map((c) => el('button', {
+    class: 'cbtn',
+    'data-id': c.id,
+    'aria-pressed': String(c.id === ui.charId && !disabled),
+    'aria-label': c.name ? `${c.emoji} ${c.name}` : c.emoji,
+    title: c.name || c.emoji,
+    disabled,
+  }, el('span', { class: 'e', text: c.emoji.trim() }), c.name ? el('span', { class: 'n', text: c.name }) : null)));
+}
+
+function renderLines() {
+  const d = cur();
+  const frag = document.createDocumentFragment();
+  const t = tagLine();
+  if (t) frag.append(el('div', { class: 'tagline', title: 'タップでハッシュタグ設定', text: t, onclick: openSettings }));
+  if (!d.lines.length) {
+    frag.append(el('div', { class: 'empty' }, 'まだ行がありません。', el('br'), '種別とキャラを選んで、下の入力欄から追加しましょう。'));
+  }
+  d.lines.forEach((l, i) => frag.append(renderLine(l, i)));
+  listEl.replaceChildren(frag);
+}
+
+function renderLine(l, i) {
+  const selected = l.id === ui.selId;
+  const row = el('div', { class: 'line' + (selected ? ' selected' : ''), 'data-id': l.id });
+  const head = el('div', { class: 'line-head', role: 'button', tabindex: '0', 'aria-label': `${i + 1}行目 ${formatLine(l)}` },
+    el('span', { class: 'handle', title: 'ドラッグで並べ替え', text: '⋮⋮', 'aria-hidden': 'true' }),
+    el('span', { class: 'num', text: String(i + 1) }),
+    el('span', { class: 'ltext' + (l.type === 'narr' ? ' narr' : ''), text: formatLine(l) }),
+    el('button', { class: 'del', text: '✕', title: 'この行を削除', 'aria-label': `${i + 1}行目を削除` }),
+  );
+  row.append(head);
+  if (selected && ui.editing) row.append(renderEditor(l, i));
+  return row;
+}
+
+function renderEditor(l, i) {
+  const d = cur();
+  const seg = el('div', { class: 'seg', role: 'group', 'aria-label': '種別' },
+    ...['say', 'think', 'narr'].map((t) => el('button', {
+      'aria-pressed': String(l.type === t), text: TYPE_LABEL[t],
+      onclick: () => {
+        l.type = t;
+        if (t !== 'narr' && !l.emoji) l.emoji = currentCharEmoji() || '';
+        touch(); renderLines();
+      },
+    })));
+
+  const charSel = el('select', { 'aria-label': 'キャラ', disabled: l.type === 'narr' });
+  const list = usableChars();
+  if (l.emoji && !list.some((c) => c.emoji === l.emoji)) {
+    charSel.append(el('option', { value: l.emoji, text: `${l.emoji}（定義外）` }));
+  }
+  for (const c of list) charSel.append(el('option', { value: c.emoji, text: c.name ? `${c.emoji} ${c.name}` : c.emoji }));
+  charSel.value = l.emoji;
+  charSel.addEventListener('change', () => { l.emoji = charSel.value; touch(); renderLines(); });
+
+  const ta = el('textarea', { 'aria-label': '本文', rows: 2 });
+  ta.value = l.text;
+  ta.addEventListener('input', () => {
+    const v = ta.value.replace(/[\r\n]+/g, '');
+    if (v !== ta.value) ta.value = v;
+    l.text = v;
+    const span = listEl.querySelector(`.line[data-id="${cssId(l.id)}"] .ltext`);
+    if (span) span.textContent = formatLine(l);
+    touch();
+  });
+  const enterCloses = (e) => {
+    if (e.key === 'Enter' && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); closeEditor(); }
+  };
+  ta.addEventListener('keydown', enterCloses);
+
+  // 閉じ括弧の後ろに続ける自由テキスト（例: 」と呟いた / ）♪）
+  let afterBox = null;
+  if (l.type !== 'narr') {
+    const close = l.type === 'say' ? '」' : '）';
+    const af = el('input', { type: 'text', 'aria-label': `${close}の後ろ`, placeholder: `${close}の後ろに続ける文（任意）例: と呟いた` });
+    af.value = l.after || '';
+    af.addEventListener('input', () => {
+      l.after = af.value.replace(/[\r\n]+/g, '');
+      const span = listEl.querySelector(`.line[data-id="${cssId(l.id)}"] .ltext`);
+      if (span) span.textContent = formatLine(l);
+      touch();
+    });
+    af.addEventListener('keydown', enterCloses);
+    afterBox = el('label', { class: 'after' }, el('span', { text: `${close}の後ろ` }), af);
+  }
+
+  return el('div', { class: 'editor' },
+    seg,
+    charSel,
+    ta,
+    afterBox,
+    el('div', { class: 'row' },
+      el('button', { text: '↑', 'aria-label': '上へ移動', disabled: i === 0, onclick: () => moveLine(l.id, -1) }),
+      el('button', { text: '↓', 'aria-label': '下へ移動', disabled: i === d.lines.length - 1, onclick: () => moveLine(l.id, 1) }),
+      el('button', { class: 'primary grow', text: '完了', onclick: closeEditor }),
+    ),
+  );
+}
+
+function renderBanner() {
+  const d = cur();
+  const idx = d.lines.findIndex((l) => l.id === ui.selId);
+  const b = $('#banner');
+  if (idx < 0) { ui.selId = null; ui.editing = false; b.classList.remove('show'); return; }
+  $('#bannerText').textContent = `▶ ${idx + 1}行目の後に挿入`;
+  b.classList.add('show');
+}
+
+function renderCounter() {
+  const n = xCount(fullText());
+  $('#count').textContent = n;
+  $('#counter').classList.toggle('over', n > LIMIT);
+  $('#over').textContent = n > LIMIT ? ` (+${n - LIMIT})` : '';
+  $('#split').textContent = `ツイート分割目安: 約${Math.max(1, Math.ceil(n / LIMIT))}件`;
+}
+
+// ===== 行操作 =====
+function currentCharEmoji() {
+  const c = usableChars().find((x) => x.id === ui.charId);
+  return c ? c.emoji.trim() : null;
+}
+
+function addLine() {
+  const text = inputEl.value.replace(/[\r\n]+/g, '');
+  if (!text.trim()) return;
+  let emoji = '';
+  if (ui.type !== 'narr') {
+    emoji = currentCharEmoji();
+    if (!emoji) { toast('キャラを選んでください'); return; }
+  }
+  const d = cur();
+  const line = { id: uid(), type: ui.type, emoji, text };
+  const idx = d.lines.findIndex((l) => l.id === ui.selId);
+  if (idx >= 0) {
+    d.lines.splice(idx + 1, 0, line);
+    ui.selId = line.id; // 続けて追加すると順に挿入される
+    ui.editing = false;
+  } else {
+    d.lines.push(line);
+  }
+  inputEl.value = '';
+  touch();
+  renderLines();
+  renderBanner();
+  scrollToLine(line.id, idx < 0);
+}
+
+function scrollToLine(id, toBottom) {
+  if (toBottom) { listEl.scrollTop = listEl.scrollHeight; return; }
+  const r = listEl.querySelector(`.line[data-id="${cssId(id)}"]`);
+  if (r) r.scrollIntoView({ block: 'nearest' });
+}
+
+function selectLine(id) {
+  if (ui.selId === id) {
+    if (ui.editing) { ui.selId = null; ui.editing = false; }
+    else ui.editing = true;
+  } else {
+    ui.selId = id; ui.editing = true;
+  }
+  renderLines(); renderBanner();
+  if (ui.editing) {
+    const ta = listEl.querySelector(`.line[data-id="${cssId(id)}"] textarea`);
+    const row = listEl.querySelector(`.line[data-id="${cssId(id)}"]`);
+    if (row) row.scrollIntoView({ block: 'nearest' });
+    if (ta && matchMedia('(pointer: fine)').matches) { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }
+  }
+}
+
+function closeEditor() {
+  ui.editing = false;
+  renderLines(); renderBanner();
+}
+
+function clearSelection() {
+  ui.selId = null; ui.editing = false;
+  renderLines(); renderBanner();
+}
+
+function moveLine(id, delta) {
+  const lines = cur().lines;
+  const i = lines.findIndex((l) => l.id === id);
+  const j = i + delta;
+  if (i < 0 || j < 0 || j >= lines.length) return;
+  [lines[i], lines[j]] = [lines[j], lines[i]];
+  touch(); renderLines(); renderBanner();
+  scrollToLine(id);
+}
+
+function deleteLine(id) {
+  const d = cur();
+  const i = d.lines.findIndex((l) => l.id === id);
+  if (i < 0) return;
+  const [removed] = d.lines.splice(i, 1);
+  if (ui.selId === id) { ui.selId = null; ui.editing = false; }
+  touch(); renderLines(); renderBanner();
+  toast(`${i + 1}行目を削除しました`, '元に戻す', () => {
+    const dd = drafts.find((x) => x.id === d.id);
+    if (!dd) return;
+    dd.lines.splice(Math.min(i, dd.lines.length), 0, removed);
+    if (dd.id === curId) { touch(); renderLines(); renderBanner(); }
+    else { dd.updatedAt = Date.now(); saveDrafts(); }
+  }, 5000);
+}
+
+// ===== ドラッグ＆ドロップ（PC） =====
+let dragId = null;
+function clearDropMarks() {
+  for (const r of listEl.querySelectorAll('.drop-before, .drop-after')) r.classList.remove('drop-before', 'drop-after');
+}
+listEl.addEventListener('mousedown', (e) => {
+  const h = e.target.closest('.handle');
+  if (h) h.closest('.line').draggable = true;
+});
+document.addEventListener('mouseup', () => {
+  if (!dragId) for (const r of listEl.querySelectorAll('.line[draggable=true]')) r.draggable = false;
+});
+listEl.addEventListener('dragstart', (e) => {
+  const row = e.target.closest && e.target.closest('.line');
+  if (!row || !row.draggable) { e.preventDefault(); return; }
+  dragId = row.dataset.id;
+  e.dataTransfer.effectAllowed = 'move';
+  try { e.dataTransfer.setData('text/plain', dragId); } catch (err) { /* noop */ }
+  row.classList.add('dragging');
+});
+listEl.addEventListener('dragover', (e) => {
+  if (!dragId) return;
+  const row = e.target.closest('.line');
+  if (!row) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+  clearDropMarks();
+  if (row.dataset.id === dragId) return;
+  const r = row.getBoundingClientRect();
+  row.classList.add(e.clientY > r.top + r.height / 2 ? 'drop-after' : 'drop-before');
+});
+listEl.addEventListener('drop', (e) => {
+  if (!dragId) return;
+  e.preventDefault();
+  const row = e.target.closest('.line');
+  const after = row && row.classList.contains('drop-after');
+  clearDropMarks();
+  if (!row || row.dataset.id === dragId) return;
+  const lines = cur().lines;
+  const from = lines.findIndex((l) => l.id === dragId);
+  const [moved] = lines.splice(from, 1);
+  let to = lines.findIndex((l) => l.id === row.dataset.id);
+  if (after) to++;
+  lines.splice(to, 0, moved);
+  touch(); renderLines(); renderBanner();
+});
+listEl.addEventListener('dragend', () => {
+  dragId = null;
+  clearDropMarks();
+  for (const r of listEl.querySelectorAll('.line')) { r.classList.remove('dragging'); r.draggable = false; }
+});
+
+// ===== イベント =====
+listEl.addEventListener('click', (e) => {
+  const del = e.target.closest('.del');
+  if (del) { deleteLine(del.closest('.line').dataset.id); return; }
+  const head = e.target.closest('.line-head');
+  if (!head || e.target.closest('.handle')) return;
+  selectLine(head.parentElement.dataset.id);
+});
+listEl.addEventListener('keydown', (e) => {
+  const head = e.target.closest('.line-head');
+  if (head && e.target === head && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); selectLine(head.parentElement.dataset.id); }
+});
+
+// 入力欄のフォーカス（＝ソフトウェアキーボード）を奪わないボタン
+for (const sel of ['#tabs', '#chars', '#btnAdd', '#bannerClear']) {
+  $(sel).addEventListener('mousedown', (e) => { if (document.activeElement === inputEl) e.preventDefault(); });
+  $(sel).addEventListener('touchstart', () => { keepFocus = document.activeElement === inputEl; }, { passive: true });
+}
+let keepFocus = false;
+const refocus = () => { if (keepFocus) { inputEl.focus(); keepFocus = false; } };
+
+$('#tabs').addEventListener('click', (e) => {
+  const b = e.target.closest('button');
+  if (!b) return;
+  ui.type = b.dataset.type;
+  renderTabs(); renderChars(); refocus();
+});
+$('#chars').addEventListener('click', (e) => {
+  const b = e.target.closest('.cbtn');
+  if (!b || b.disabled) return;
+  ui.charId = b.dataset.id;
+  renderChars(); refocus();
+});
+$('#btnAdd').addEventListener('click', () => { addLine(); inputEl.focus(); });
+inputEl.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); addLine(); }
+});
+$('#bannerClear').addEventListener('click', () => { clearSelection(); refocus(); });
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && ui.selId && !document.querySelector('dialog[open]')) clearSelection();
+});
+
+// 下書き
+$('#draftSel').addEventListener('change', (e) => {
+  curId = e.target.value; saveCur();
+  ui.selId = null; ui.editing = false;
+  renderAll();
+  listEl.scrollTop = listEl.scrollHeight;
+});
+$('#btnNew').addEventListener('click', () => {
+  newDraft();
+  ui.selId = null; ui.editing = false;
+  renderAll();
+  toast('新しい下書きを作成しました');
+});
+$('#btnRename').addEventListener('click', () => {
+  const d = cur();
+  const name = prompt('下書き名', d.name);
+  if (name == null || !name.trim()) return;
+  d.name = name.trim();
+  touch(); renderDrafts();
+});
+$('#btnDelDraft').addEventListener('click', () => {
+  const d = cur();
+  if (!confirm(`下書き「${d.name}」を削除しますか？\nこの操作は元に戻せません。`)) return;
+  drafts = drafts.filter((x) => x.id !== d.id);
+  if (drafts.length) curId = drafts[0].id; else newDraft();
+  saveDrafts(); saveCur();
+  ui.selId = null; ui.editing = false;
+  renderAll();
+  toast('下書きを削除しました');
+});
+
+// コピー
+function legacyCopy(text) {
+  const ta = el('textarea', { readonly: '' });
+  ta.value = text;
+  ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0;font-size:16px;';
+  document.body.append(ta);
+  ta.select();
+  ta.setSelectionRange(0, text.length);
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+  ta.remove();
+  return ok;
+}
+$('#btnCopy').addEventListener('click', async () => {
+  const text = fullText();
+  if (!cur().lines.length) { toast('本文がありません'); return; }
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      toast('コピーしました'); return;
+    }
+  } catch (e) { /* フォールバックへ */ }
+  if (legacyCopy(text)) { toast('コピーしました'); return; }
+  const ta = $('#copyText');
+  ta.value = text;
+  $('#dlgCopy').showModal();
+  ta.focus(); ta.select();
+});
+
+// ===== 設定 =====
+function openSettings() {
+  renderCharEditor();
+  renderTagEditor();
+  $('#dlgSettings').showModal();
+}
+$('#btnSettings').addEventListener('click', openSettings);
+for (const b of document.querySelectorAll('.closeDlg')) b.addEventListener('click', () => b.closest('dialog').close());
+for (const dlg of document.querySelectorAll('dialog')) {
+  dlg.addEventListener('click', (e) => { if (e.target === dlg) dlg.close(); });
+}
+$('#dlgSettings').addEventListener('close', () => {
+  // 空の絵文字のキャラは残すが、ボタンには出さない
+  renderChars(); renderLines(); renderBanner(); renderCounter();
+});
+
+function moveItem(arr, i, delta) {
+  const j = i + delta;
+  if (j < 0 || j >= arr.length) return false;
+  [arr[i], arr[j]] = [arr[j], arr[i]];
+  return true;
+}
+
+function renderCharEditor() {
+  const box = $('#charEditor');
+  box.replaceChildren(...chars.map((c, i) => {
+    const emo = el('input', { type: 'text', class: 'emoji' + (c.emoji.trim() ? '' : ' invalid'), 'aria-label': `${i + 1}番目の絵文字`, placeholder: '絵文字' });
+    emo.value = c.emoji;
+    emo.addEventListener('input', () => {
+      c.emoji = emo.value.trim();
+      emo.classList.toggle('invalid', !c.emoji);
+      saveChars(); renderChars();
+    });
+    const name = el('input', { type: 'text', class: 'name', 'aria-label': `${i + 1}番目の表示名`, placeholder: '表示名（任意）' });
+    name.value = c.name || '';
+    name.addEventListener('input', () => { c.name = name.value; saveChars(); renderChars(); });
+    return el('div', { class: 'erow' },
+      emo, name,
+      el('button', { text: '↑', 'aria-label': '上へ', disabled: i === 0, onclick: () => { if (moveItem(chars, i, -1)) { saveChars(); renderCharEditor(); renderChars(); } } }),
+      el('button', { text: '↓', 'aria-label': '下へ', disabled: i === chars.length - 1, onclick: () => { if (moveItem(chars, i, 1)) { saveChars(); renderCharEditor(); renderChars(); } } }),
+      el('button', { class: 'danger', text: '✕', 'aria-label': '削除', onclick: () => {
+        if (!confirm(`キャラ「${c.emoji} ${c.name || ''}」を削除しますか？\n（既存の行はそのまま残ります）`)) return;
+        chars.splice(i, 1); saveChars(); renderCharEditor(); renderChars();
+      } }),
+    );
+  }));
+}
+$('#btnAddChar').addEventListener('click', () => {
+  chars.push({ id: uid(), emoji: '', name: '' });
+  saveChars(); renderCharEditor();
+  const inputs = $('#charEditor').querySelectorAll('input.emoji');
+  inputs[inputs.length - 1].focus();
+});
+$('#btnResetChars').addEventListener('click', () => {
+  if (!confirm('キャラ定義を初期値（まのさばプリセット13件）に戻しますか？\n追加・編集したキャラは失われます。（既存の行はそのまま）')) return;
+  chars = defaultChars();
+  ui.charId = chars[0].id;
+  saveChars(); renderCharEditor(); renderChars();
+});
+
+function renderTagEditor() {
+  const box = $('#tagEditor');
+  box.replaceChildren(...tags.map((t, i) => {
+    const chk = el('input', { type: 'checkbox', 'aria-label': `${i + 1}番目のタグを出力する` });
+    chk.checked = !!t.on;
+    chk.addEventListener('change', () => {
+      t.on = chk.checked;
+      let switched = false;
+      if (t.on && t.group) {
+        for (const o of tags) if (o !== t && o.group === t.group && o.on) { o.on = false; switched = true; }
+      }
+      saveTags(); renderLines(); renderCounter();
+      if (switched) renderTagEditor();
+    });
+    const inp = el('input', { type: 'text', class: 'name', 'aria-label': `${i + 1}番目のハッシュタグ`, placeholder: '#タグ' });
+    inp.value = t.tag;
+    inp.addEventListener('input', () => { t.tag = inp.value; saveTags(); renderLines(); renderCounter(); });
+    inp.addEventListener('blur', () => { t.tag = normTag(inp.value); inp.value = t.tag; saveTags(); });
+    return el('div', { class: 'erow' },
+      el('label', { class: 'chk' }, chk),
+      inp,
+      el('button', { text: '↑', 'aria-label': '上へ', disabled: i === 0, onclick: () => { if (moveItem(tags, i, -1)) { saveTags(); renderTagEditor(); renderLines(); } } }),
+      el('button', { text: '↓', 'aria-label': '下へ', disabled: i === tags.length - 1, onclick: () => { if (moveItem(tags, i, 1)) { saveTags(); renderTagEditor(); renderLines(); } } }),
+      el('button', { class: 'danger', text: '✕', 'aria-label': '削除', onclick: () => {
+        tags.splice(i, 1); saveTags(); renderTagEditor(); renderLines(); renderCounter();
+      } }),
+    );
+  }));
+}
+$('#btnAddTag').addEventListener('click', () => {
+  tags.push({ id: uid(), tag: '', on: true });
+  saveTags(); renderTagEditor();
+  const inputs = $('#tagEditor').querySelectorAll('input.name');
+  inputs[inputs.length - 1].focus();
+});
+$('#btnResetTags').addEventListener('click', () => {
+  if (!confirm('ハッシュタグを初期値に戻しますか？')) return;
+  tags = defaultTags();
+  saveTags(); renderTagEditor(); renderLines(); renderCounter();
+});
+
+// ===== トースト =====
+let toastTimer = null, toastAction = null;
+function toast(msg, actLabel, onAct, ms = 2000) {
+  const t = $('#toast');
+  $('#toastMsg').textContent = msg;
+  $('#toastAct').textContent = actLabel || '';
+  t.classList.toggle('has-action', !!actLabel);
+  toastAction = onAct || null;
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { t.classList.remove('show'); toastAction = null; }, ms);
+}
+$('#toastAct').addEventListener('mousedown', (e) => e.preventDefault());
+$('#toastAct').addEventListener('click', () => {
+  const fn = toastAction;
+  toastAction = null;
+  $('#toast').classList.remove('show');
+  if (fn) fn();
+});
+
+// ===== ビューポート（スマホのキーボード対策） =====
+const app = $('#app');
+function fitViewport() {
+  const vv = window.visualViewport;
+  const h = vv ? vv.height : window.innerHeight;
+  document.documentElement.style.setProperty('--app-h', h + 'px');
+  app.style.transform = vv && vv.offsetTop ? `translateY(${vv.offsetTop}px)` : '';
+  const kb = !!vv && window.innerHeight - vv.height > 120;
+  document.body.classList.toggle('kb-open', kb);
+  const panelH = $('#panel').offsetHeight;
+  document.documentElement.style.setProperty('--toast-bottom', (window.innerHeight - h - (vv ? vv.offsetTop : 0) + panelH + 12) + 'px');
+}
+if (window.visualViewport) {
+  visualViewport.addEventListener('resize', fitViewport);
+  visualViewport.addEventListener('scroll', fitViewport);
+}
+window.addEventListener('resize', fitViewport);
+
+// 別タブでの変更を反映
+window.addEventListener('storage', (e) => {
+  if (!e.key || !e.key.startsWith('ssTool.')) return;
+  chars = loadChars();
+  tags = loadTags();
+  drafts = loadDrafts();
+  if (!drafts.length) newDraft();
+  if (!drafts.some((d) => d.id === curId)) curId = drafts[0].id;
+  renderAll();
+});
+
+// ===== 起動 =====
+renderAll();
+fitViewport();
+listEl.scrollTop = listEl.scrollHeight;
+})();
+</script>
+</body>
+</html>
