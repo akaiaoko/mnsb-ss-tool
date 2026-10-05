@@ -127,6 +127,7 @@ header button { padding: 0; font-size: 18px; }
   margin-bottom: 4px;
   position: relative;
 }
+#list.spaced .line { margin-bottom: 14px; }
 .line.selected { background: var(--select); border-color: var(--accent); }
 .line.dragging { opacity: .4; }
 .line.drop-before::before, .line.drop-after::after {
@@ -351,6 +352,7 @@ dialog::backdrop { background: rgba(0,0,0,.45); }
       <h3>出力形式</h3>
       <label class="opt"><input type="checkbox" id="optSay"> セリフを「」で囲む <span class="ex" id="optSayEx"></span></label>
       <label class="opt"><input type="checkbox" id="optThink"> 心の声を（）で囲む <span class="ex" id="optThinkEx"></span></label>
+      <label class="opt"><input type="checkbox" id="optBlank"> 1行ごとに空行を入れる <span class="ex">読みやすくなる分、文字数は増えます</span></label>
       <p class="note">全下書き共通。切り替えると既存の行の表示・コピーにもすぐ反映されます（行の中身は変わらないので、いつでも戻せます）。</p>
     </section>
     <section>
@@ -537,12 +539,16 @@ let tags = loadTags();
 let drafts = loadDrafts();
 
 // 出力形式のオプション（全下書き共通）。行には本文だけを保存しているので、切り替えると全行に反映される
-const DEFAULT_OPTIONS = { sayBrackets: true, thinkBrackets: true };
+const DEFAULT_OPTIONS = { sayBrackets: true, thinkBrackets: true, blankLines: false };
 function loadOptions() {
   try {
     const o = JSON.parse(localStorage.getItem(KEYS.options) || 'null');
     if (isObj(o) && isObj(o.values)) {
-      return { sayBrackets: o.values.sayBrackets !== false, thinkBrackets: o.values.thinkBrackets !== false };
+      return {
+        sayBrackets: o.values.sayBrackets !== false,
+        thinkBrackets: o.values.thinkBrackets !== false,
+        blankLines: o.values.blankLines === true,
+      };
     }
   } catch (e) { /* 壊れていれば既定値 */ }
   return { ...DEFAULT_OPTIONS };
@@ -642,10 +648,10 @@ function formatLine(l) {
   return l.text;
 }
 function fullText() {
-  const parts = cur().lines.map(formatLine);
+  // 空行オプションは本文の行間だけに効かせる（タグ行と本文の間は改行1つのまま）
+  const body = cur().lines.map(formatLine).join(options.blankLines ? '\n\n' : '\n');
   const t = tagLine();
-  if (t) parts.unshift(t);
-  return parts.join('\n');
+  return t ? (body ? `${t}\n${body}` : t) : body;
 }
 
 // ===== 描画 =====
@@ -696,6 +702,7 @@ function renderChars() {
 
 function renderLines() {
   const d = cur();
+  listEl.classList.toggle('spaced', options.blankLines);
   const frag = document.createDocumentFragment();
   const t = tagLine();
   if (t) frag.append(el('div', { class: 'tagline', title: 'タップでハッシュタグ設定', text: t, onclick: openSettings }));
@@ -1049,10 +1056,11 @@ $('#btnCopy').addEventListener('click', async () => {
 function renderOptions() {
   $('#optSay').checked = options.sayBrackets;
   $('#optThink').checked = options.thinkBrackets;
+  $('#optBlank').checked = options.blankLines;
   $('#optSayEx').textContent = options.sayBrackets ? '例: 🌸「こんにちわ」' : '例: 🌸こんにちわ';
   $('#optThinkEx').textContent = options.thinkBrackets ? '例: 🌸（緊張する）' : '例: 🌸緊張する';
 }
-for (const [id, key] of [['#optSay', 'sayBrackets'], ['#optThink', 'thinkBrackets']]) {
+for (const [id, key] of [['#optSay', 'sayBrackets'], ['#optThink', 'thinkBrackets'], ['#optBlank', 'blankLines']]) {
   $(id).addEventListener('change', (e) => {
     options[key] = e.target.checked;
     saveOptions(); renderOptions(); renderLines(); renderCounter();
