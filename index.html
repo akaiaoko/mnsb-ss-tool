@@ -271,6 +271,9 @@ dialog::backdrop { background: rgba(0,0,0,.45); }
 .erow button { padding: 0; flex: 0 0 auto; }
 .erow label.chk { min-width: var(--tap); min-height: var(--tap); display: flex; align-items: center; justify-content: center; cursor: pointer; }
 .erow label.chk input { width: 22px; height: 22px; accent-color: var(--accent); }
+.opt { display: flex; flex-wrap: wrap; align-items: center; column-gap: 8px; min-height: var(--tap); cursor: pointer; }
+.opt input { width: 22px; height: 22px; accent-color: var(--accent); flex: 0 0 auto; }
+.opt .ex { color: var(--muted); font-size: 13px; }
 .btnrow { display: flex; gap: 6px; flex-wrap: wrap; }
 .btnrow button { flex: 1; }
 #copyText { min-height: 200px; white-space: pre; }
@@ -345,6 +348,12 @@ dialog::backdrop { background: rgba(0,0,0,.45); }
   </div>
   <div class="dlg-body">
     <section>
+      <h3>出力形式</h3>
+      <label class="opt"><input type="checkbox" id="optSay"> セリフを「」で囲む <span class="ex" id="optSayEx"></span></label>
+      <label class="opt"><input type="checkbox" id="optThink"> 心の声を（）で囲む <span class="ex" id="optThinkEx"></span></label>
+      <p class="note">全下書き共通。切り替えると既存の行の表示・コピーにもすぐ反映されます（行の中身は変わらないので、いつでも戻せます）。</p>
+    </section>
+    <section>
       <h3>キャラ定義</h3>
       <div id="charEditor"></div>
       <div class="btnrow">
@@ -390,6 +399,7 @@ const KEYS = {
   tags: 'ssTool.hashtags',
   drafts: 'ssTool.drafts',
   cur: 'ssTool.currentDraftId',
+  options: 'ssTool.options',
 };
 const DEFAULT_CHARS = [
   ['エマ', '🌸'], ['ヒロ', '🖋️'], ['アンアン', '🐑'], ['ノア', '🎨'], ['レイア', '👑'],
@@ -525,6 +535,23 @@ const loadDrafts = () => load(KEYS.drafts, () => [], sanitizeDrafts);
 let chars = loadChars();
 let tags = loadTags();
 let drafts = loadDrafts();
+
+// 出力形式のオプション（全下書き共通）。行には本文だけを保存しているので、切り替えると全行に反映される
+const DEFAULT_OPTIONS = { sayBrackets: true, thinkBrackets: true };
+function loadOptions() {
+  try {
+    const o = JSON.parse(localStorage.getItem(KEYS.options) || 'null');
+    if (isObj(o) && isObj(o.values)) {
+      return { sayBrackets: o.values.sayBrackets !== false, thinkBrackets: o.values.thinkBrackets !== false };
+    }
+  } catch (e) { /* 壊れていれば既定値 */ }
+  return { ...DEFAULT_OPTIONS };
+}
+const saveOptions = () => {
+  try { localStorage.setItem(KEYS.options, JSON.stringify({ version: VERSION, values: options })); }
+  catch (e) { warnStorage(); }
+};
+let options = loadOptions();
 let curId = null;
 try { curId = localStorage.getItem(KEYS.cur); } catch (e) { /* noop */ }
 // 変換したデータは新しい形式で保存し直す
@@ -610,8 +637,8 @@ function normTag(t) {
 const tagLine = () => tags.filter((t) => t.on).map((t) => normTag(t.tag)).filter(Boolean).join(' ');
 function formatLine(l) {
   const after = l.after || '';
-  if (l.type === 'say') return `${l.emoji}「${l.text}」${after}`;
-  if (l.type === 'think') return `${l.emoji}（${l.text}）${after}`;
+  if (l.type === 'say') return options.sayBrackets ? `${l.emoji}「${l.text}」${after}` : `${l.emoji}${l.text}${after}`;
+  if (l.type === 'think') return options.thinkBrackets ? `${l.emoji}（${l.text}）${after}` : `${l.emoji}${l.text}${after}`;
   return l.text;
 }
 function fullText() {
@@ -732,7 +759,7 @@ function renderEditor(l, i) {
   // 閉じ括弧の後ろに続ける自由テキスト（例: 」と呟いた / ）♪）
   let afterBox = null;
   if (l.type !== 'narr') {
-    const close = l.type === 'say' ? '」' : '）';
+    const close = (l.type === 'say' ? (options.sayBrackets && '」') : (options.thinkBrackets && '）')) || '本文';
     const af = el('input', { type: 'text', 'aria-label': `${close}の後ろ`, placeholder: `${close}の後ろに続ける文（任意）例: と呟いた` });
     af.value = l.after || '';
     af.addEventListener('input', () => {
@@ -1019,7 +1046,20 @@ $('#btnCopy').addEventListener('click', async () => {
 });
 
 // ===== 設定 =====
+function renderOptions() {
+  $('#optSay').checked = options.sayBrackets;
+  $('#optThink').checked = options.thinkBrackets;
+  $('#optSayEx').textContent = options.sayBrackets ? '例: 🌸「こんにちわ」' : '例: 🌸こんにちわ';
+  $('#optThinkEx').textContent = options.thinkBrackets ? '例: 🌸（緊張する）' : '例: 🌸緊張する';
+}
+for (const [id, key] of [['#optSay', 'sayBrackets'], ['#optThink', 'thinkBrackets']]) {
+  $(id).addEventListener('change', (e) => {
+    options[key] = e.target.checked;
+    saveOptions(); renderOptions(); renderLines(); renderCounter();
+  });
+}
 function openSettings() {
+  renderOptions();
   renderCharEditor();
   renderTagEditor();
   $('#dlgSettings').showModal();
@@ -1163,6 +1203,7 @@ window.addEventListener('storage', (e) => {
   chars = loadChars();
   tags = loadTags();
   drafts = loadDrafts();
+  options = loadOptions();
   if (!drafts.length) newDraft();
   if (!drafts.some((d) => d.id === curId)) curId = drafts[0].id;
   renderAll();
